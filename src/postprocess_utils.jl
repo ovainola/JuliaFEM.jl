@@ -224,12 +224,14 @@ end
 
 function call(solver::Solver, ::Type{DataFrame}, field_name::AbstractString,
               abbreviation::Symbol, time::Float64=0.0)
-    fields = [problem(field_name, time) for problem in get_problems(solver)]
-    fields = filter(f -> f != nothing, fields)
-    if length(fields) != 0
-        u = merge(fields...)
-    else
-        u = Dict()
+    u = Dict()
+    for problem in get_problems(solver)
+        try
+            field = problem(field_name, time)
+            merge!(u, field.data)
+        catch KeyError
+            warn("field $field_name not found for problem $(problem.name)")
+        end
     end
     return to_dataframe(u, abbreviation)
 end

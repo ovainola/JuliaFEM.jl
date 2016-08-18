@@ -60,15 +60,27 @@ function call(element::Element, ip, time::Float64=0.0)
     return get_basis(element, ip, time)
 end
 
+function is_dict_field(field::Field)
+    debug("field = $field")
+    debug("field.data = $(field.data)")
+    debug("typeof field.data = ", typeof(field.data))
+    return typeof(field.data) <: Dict
+end
+
+function is_dict_field(element::Element, field_name::AbstractString, time::Float64)
+    return is_dict_field(element(field_name, time))
+end
+
 function call(element::Element, ip, time::Float64, ::Type{Val{:Jacobian}})
     X = element("geometry", time)
     dN = get_dbasis(element, ip, time)
     nbasis = length(element)
-    if isa(X.data, Vector)
-        J = sum([kron(dN[:,i], X[i]') for i=1:nbasis])
-    else
+    if is_dict_field(X)
         c = get_connectivity(element)
         J = sum([kron(dN[:,i], X[c[i]]') for i=1:nbasis])
+    else
+        info("field $X is not dict field")
+        J = sum([kron(dN[:,i], X[i]') for i=1:nbasis])
     end
     return J
 end
@@ -93,7 +105,15 @@ function call(element::Element, ip, time::Float64, ::Type{Val{:Grad}})
 end
 
 function call(element::Element, field_name::AbstractString, ip, time::Float64, ::Type{Val{:Grad}})
-    return element(ip, time, Val{:Grad})*element[field_name](time)
+    grad = element(ip, time, Val{:Grad})
+    field = element(field_name, time)
+    if is_dict_field(field)
+        nbasis = length(element)
+        c = get_connectivity(element)
+        return sum([kron(grad[:,i], field[c[i]]') for i=1:nbasis])
+    else
+        return grad*field
+    end
 end
 
 function call(element::Element, field::Field, time)

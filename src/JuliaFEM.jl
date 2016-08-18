@@ -1,12 +1,6 @@
 # This file is a part of JuliaFEM.
 # License is MIT: see https://github.com/JuliaFEM/JuliaFEM.jl/blob/master/LICENSE.md
 
-using Logging
-
-if haskey(ENV, "JULIAFEM_LOGLEVEL")
-    ENV["JULIAFEM_LOGLEVEL"] == "DEBUG" && Logging.configure(level=DEBUG)
-end
-
 """
 This is JuliaFEM -- Finite Element Package
 """
@@ -14,16 +8,19 @@ module JuliaFEM
 
 importall Base
 
-module Testing
+using Logging
+if haskey(ENV, "JULIAFEM_LOGLEVEL")
+    ENV["JULIAFEM_LOGLEVEL"] == "DEBUG" && Logging.configure(level=DEBUG)
+end
+export info, debug, warn, critical, err
 
+module Testing
     if VERSION >= v"0.5-"
         using Base.Test
     else
         using BaseTestNext
     end
-
     export @test, @testset, @test_throws
-
 end
 
 include("io.jl")

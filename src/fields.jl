@@ -298,8 +298,14 @@ field with already existing time the old value is replaced with new one.
 """
 function update!{T}(field::Union{DCTV, DVTV}, val::Pair{Float64, T})
     time, data = val
-    if isapprox(last(field).time, time)
-        last(field).data = data
+    last_field = last(field)
+    if isapprox(last_field.time, time)
+#       debug("field $T with time $(last_field.time) already exists")
+        if T <: Dict
+            merge!(last_field.data, data)
+        else
+            last_field.data = data
+        end
     else
         push!(field.data, Increment(val...))
     end

@@ -142,9 +142,33 @@ function get_assembly(problem)
     return problem.assembly
 end
 
+""" Initialize element ready for calculation. Shared field initialization, i.e.
+initialize a single Dict-based field and pass pointer to elements. """
+function initialize!(problem::Problem, time::Float64, ::Type{Val{:Global}})
+    field_name = get_unknown_field_name(problem)
+    field_dim = get_unknown_field_dimension(problem)
+    T = field_dim == 1 ? Float64 : Vector{Float64}
+    field = Dict{Int64, T}()
+    for element in get_elements(problem)
+        for nid in get_connectivity(element)
+            if field_dim == 1
+                field[nid] = 0.0
+            else
+                field[nid] = zeros(field_dim)
+            end
+        end
+    end
+    update!(problem, field_name, time => field)
 
-""" Initialize element ready for calculation. """
-function initialize!(problem::Problem, element::Element, time::Float64)
+    # if boundary problem, initialize field for main problem too
+    if is_boundary_problem(problem)
+        field_name = get_parent_field_name(problem)
+        update!(problem, field_name, time => copy(field))
+    end
+end
+
+""" Initialize element ready for calculation. Local field initialization. """
+function initialize!(problem::Problem, element::Element, time::Float64, ::Type{Val{:Local}})
     field_name = get_unknown_field_name(problem)
     field_dim = get_unknown_field_dimension(problem)
     nnodes = length(element)
@@ -170,10 +194,14 @@ function initialize!(problem::Problem, element::Element, time::Float64)
     end
 end
 
-function initialize!(problem::Problem, time::Float64=0.0)
+function initialize!(problem::Problem, time::Float64, ::Type{Val{:Local}})
     for element in get_elements(problem)
-        initialize!(problem, element, time)
+        initialize!(problem, element, time, Val{:Local})
     end
+end
+
+function initialize!(problem::Problem, time::Float64=0.0)
+    initialize!(problem, time, Val{:Global})
 end
 
 """ Update problem solution vector for assembly. """
@@ -247,27 +275,40 @@ function get_global_solution(problem::Problem, assembly::Assembly)
     end
 end
 
+
 """ Update solution from assebly to elements. """
 function update!{P<:FieldProblem}(problem::Problem{P}, assembly::Assembly, elements::Vector{Element}, time::Float64)
     u, la = get_global_solution(problem, assembly)
+    u_dict = Dict([i => u[i] for i=1:length(u)])
+    la_dict = Dict([i => la[i] for i=1:length(la)])
     field_name = get_unknown_field_name(problem)
     # update solution u for elements
     for element in elements
-        connectivity = get_connectivity(element)
-        update!(element, field_name, time => u[connectivity])
+        if is_dict_field(element, field_name, time)
+            update!(element, field_name, time => u_dict)
+        else
+            connectivity = get_connectivity(element)
+            update!(element, field_name, time => u[connectivity])
+        end
     end
 end
 
 function update!{P<:BoundaryProblem}(problem::Problem{P}, assembly::Assembly, elements::Vector{Element}, time::Float64)
     u, la = get_global_solution(problem, assembly)
+    u_dict = Dict([i => u[i] for i=1:length(u)])
+    la_dict = Dict([i => -la[i] for i=1:length(la)]) # FIXME
     parent_field_name = get_parent_field_name(problem) # displacement
     field_name = get_unknown_field_name(problem) # reaction force
     # update solution u and reaction force λ for boundary elements
     for element in elements
-        connectivity = get_connectivity(element)
-        update!(element, parent_field_name, time => u[connectivity])
-        # FIXME
-        update!(element, field_name, time => -la[connectivity])
+        if is_dict_field(element, field_name, time)
+            update!(element, field_name, time => la_dict)
+            update!(element, parent_field_name, time => u_dict)
+        else
+            connectivity = get_connectivity(element)
+            update!(element, field_name, time => -la[connectivity]) # FIXME
+            update!(element, parent_field_name, time => u[connectivity])
+        end
     end
 end
 
@@ -285,7 +326,7 @@ end
 
 function update!(problem::Problem, field_name::AbstractString, data)
     if haskey(problem.fields, field_name)
-        update!(problem.fields[field_name], field_name::AbstractString, data)
+        update!(problem.fields[field_name], data)
     else
         problem.fields[field_name] = Field(data)
     end
@@ -300,7 +341,8 @@ function getindex(problem::Problem, field_name::AbstractString)
     return problem.fields[field_name]
 end
 
-""" Return field calculated to nodal points for elements in problem p. """
+""" Return nodal dict field for problem. If field does not exist on problem,
+loop through problem elements and construct it on fly. """
 function call(problem::Problem, field_name::AbstractString, time::Float64=0.0)
     if haskey(problem, field_name)
         return problem[field_name](time)
@@ -323,9 +365,9 @@ function call(problem::Problem, field_name::AbstractString, time::Float64=0.0)
             end
         end
     end
-    f == nothing && return f
+    f == nothing && throw(KeyError(field_name))
     update!(problem, field_name, time => f)
-    return f
+    return problem[field_name](time)
 end
 
 """ Return the dimension of the unknown field of this problem. """
